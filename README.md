@@ -19,9 +19,13 @@ Just download and execute.
 Get general help via: python sledgehammer.py --help
 Depending on attack mode parameters can vary. See mode-parameters for more info.
 
-- WiFI DoS via smart deauthentication
+- WiFI DoS via smart deauthentication: Disconnect all WiFi clients
 
   python sledgehammer.py --mode wifi_deauth --iface_name wlan1 --count 9999
+
+- WiFI DoS via smart deauthentication: Disconnect all WiFi clients except '00:11:22:33:44:55'
+
+  python sledgehammer.py --mode wifi_deauth --iface_name wlan1 --nobroadcast --macs_excluded 00:11:22:33:44:55 --count 9999
 
 - WiFi DoS via mass fake APs
 

@@ -96,7 +96,7 @@ def wifi_deauth_cb(pargs):
 	thread_listen = threading.Thread(target=listen_cycler, args=[pargs])
 	thread_listen.start()
 
-	logger.info("First round slow start..")
+	logger.info("first round slow start..")
 
 	for cnt in range(pargs.count):
 		seq = 0
@@ -115,7 +115,7 @@ def wifi_deauth_cb(pargs):
 			pargs.current_channel = channel
 
 			try:
-				time.sleep(0.5 if cnt == 0 else 0.075)
+				time.sleep(0.4 if cnt == 0 else 0.005)
 			except KeyboardInterrupt:
 				pargs.is_running = False
 				break
