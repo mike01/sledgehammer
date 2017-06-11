@@ -7,10 +7,10 @@ Sledgehammer is collection of Jammer/DoS tools for various protocols. Those incl
 - icmp
 - tcp
 
-
-### Prerequisites
+### Requirements
 - Python 3.x
 - Pypacker ('pip install pypacker' or clone and 'python setup.py install')
+- iwconfig (wireless-tools)
 
 ### Installation
 Just download and execute.

