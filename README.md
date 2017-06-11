@@ -1,7 +1,7 @@
 ### General information
 Sledgehammer is collection of Jammer/DoS tools for various protocols. Those include at minimum:
 
-- Wifi (deauthentication, fake AP creation)
+- WiFi (deauthentication, fake AP creation, etc.)
 - arp
 - ip
 - icmp
