@@ -1,7 +1,7 @@
 ### General information
 Sledgehammer is collection of Jammer/DoS tools for various protocols. Those include at minimum:
 
-- Wifi (deauthentication, AP simulation)
+- Wifi (deauthentication, fake AP creation)
 - arp
 - ip
 - icmp
@@ -11,7 +11,7 @@ Sledgehammer is collection of Jammer/DoS tools for various protocols. Those incl
 ### Prerequisites
 - Python 3.x
 - Pypacker ('pip install pypacker' or clone and 'python setup.py install')
-# 
+
 ### Installation
 Just download and execute.
 
