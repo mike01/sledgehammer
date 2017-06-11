@@ -46,3 +46,6 @@ Depending on attack mode parameters can vary. See mode-parameters for more info.
 - TCP
 
   python sledgehammer.py --mode tcp --iface_name wlan1 --mac_dst 00:11:22:33:44:55:66 --ip_dst 193.99.144.80 --port_dst 443
+
+### Disclaimer
+Use at your own risk. Do not use without full consent of everyone involved.
