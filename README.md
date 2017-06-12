@@ -18,6 +18,7 @@ Just download and execute.
 ### Usage examples
 Get general help via: python sledgehammer.py --help
 Depending on attack mode parameters can vary. See mode-parameters for more info.
+Default source MAC and IP address is the one of the interface given by 'iface_name'.
 
 - WiFI DoS via smart deauthentication: Disconnect all WiFi clients
 

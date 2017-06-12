@@ -4,6 +4,22 @@ Sledgehammer DoS/Jammer tool.
 Requirements:
 - Python 3
 - Pypacker
+
+
+Copyright (C) 2017 Michael Stahn <michael.stahn.42@gmail.com>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import socket
 import struct
@@ -79,10 +95,12 @@ def wifi_deauth_cb(pargs):
 					wdata[pargs.current_channel][bssid] = set()
 
 			for client in pkt_ieee80211.extract_client_macs():
+				bssid = pkt_ieee80211.upper_layer.bssid
+
 				if client not in pargs.macs_excluded and\
-						client not in wdata[pargs.current_channel][pkt_ieee80211.upper_layer.bssid]:
+						client not in wdata[pargs.current_channel][bssid]:
 					# logger.debug("new client: %r %s", client, utils.get_vendor_for_mac(client))
-					wdata[pargs.current_channel][pkt_ieee80211.upper_layer.bssid].add(client)
+					wdata[pargs.current_channel][bssid].add(client)
 
 	pargs.is_running = True
 	pargs.current_channel = channels[0]
@@ -164,7 +182,7 @@ def wifi_ap_cb(pargs):
 		channels = utils.get_available_wlan_channels(pargs.iface_name)
 
 	beacon_orig = radiotap.Radiotap() + \
-				 	ieee80211.IEEE80211(type=ieee80211.MGMT_TYPE, subtype=ieee80211.M_BEACON, to_ds=0, from_ds=0) + \
+					ieee80211.IEEE80211(type=ieee80211.MGMT_TYPE, subtype=ieee80211.M_BEACON, to_ds=0, from_ds=0) + \
 					ieee80211.IEEE80211.Beacon(
 					dst=b"\xFF\xFF\xFF\xFF\xFF\xFF",
 					src=b"\xFF\xFF\xFF\xFF\xFF\xFF",
@@ -468,7 +486,7 @@ if __name__ == "__main__":
 				pypacker.mac_str_to_bytes(mac) for mac in args.macs_excluded.split(",")
 		])
 
-	wifi_modes = set(["wifi_deauth", "wifi_ap", "wifi_auth"])
+	wifi_modes = {"wifi_deauth", "wifi_ap", "wifi_auth"}
 
 	if args.mode in wifi_modes:
 		logger.info("trying to activate monitor mode on %s", args.iface_name)
