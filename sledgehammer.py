@@ -251,15 +251,18 @@ def wifi_ap_cb(pargs):
 
 			if time.time() - starttime > 60:
 				rounds += 1
+				cnt = 0
+
+		cnt_bts = unpack_I(cnt)[0][-3:]
 		cnt += 1
 
 		if rand_mac:
-			mac = pypacker.get_rnd_mac()
+			mac = pypacker.get_rnd_mac()[:3] + cnt_bts
 			_beacon.src = mac
 			_beacon.bssid = mac
 
 		if rand_essid:
-			_beacon.params[0].body_bytes = get_random_essid()
+			_beacon.params[0].body_bytes = get_random_essid()[:-3] + cnt_bts
 			_beacon.params[0].len = len(_beacon.params[0].body_bytes)
 
 		try:
